@@ -1,0 +1,649 @@
+sql-ex
+
+
+
+6, 7, 10, 11,
+15, 16, 17, 18,
+23, 24, 25, 26, 27, 28,
+30,
+59, 60, 64,
+63, 66, 77, 93, 124,
+65, 130
+
+
+Exercise: 65 (Serge I: 2009-08-24)
+
+Number the unique pairs {maker, type} in the Product table, ordering them as follows:
+- maker name in ascending order;
+- type of product (type) in the order PC, Laptop, Printer.
+If a manufacturer produces more than one type of product, its name should be displayed in the first row only;
+other rows for THIS manufacturer should contain an empty string (').
+
+
+
+WITH
+uniq_pairs AS (
+    SELECT DISTINCT maker, type FROM Product
+),
+ordered AS (
+    SELECT
+    *
+    , ROW_NUMBER() OVER(PARTITION BY maker ORDER BY
+        CASE WHEN type='PC' THEN 1
+             WHEN type='Laptop' THEN 2
+             WHEN type='Printer' THEN 3
+             ELSE 4 END ASC) AS internal_num
+    , ROW_NUMBER() OVER(ORDER BY maker ASC,
+        CASE WHEN type='PC' THEN 1
+             WHEN type='Laptop' THEN 2
+             WHEN type='Printer' THEN 3
+             ELSE 4 END ASC) AS num
+    FROM uniq_pairs
+)
+SELECT 
+    num
+    , CASE WHEN internal_num=1 THEN maker
+           ELSE '' END AS maker
+    , type
+FROM ordered
+
+
+Exercise: 124 (DimaN: 2004-03-01)
+
+Among the passengers who flew with at least two airlines find those who traveled the same number of times with each of these airlines. Display the names of such passengers.
+
+
+WITH 
+psg_trips AS (
+    SELECT
+        Pass_in_trip.id_psg
+        , Trip.id_comp
+        , COUNT(Pass_in_trip.trip_no) as trips
+    FROM Pass_in_trip
+    INNER JOIN Trip ON Trip.trip_no=Pass_in_trip.trip_no
+    GROUP BY id_psg, id_comp
+)
+SELECT
+    --psg_trips.id_psg
+    Passenger.name
+    --, COUNT(DISTINCT id_comp) AS companies
+    --, CASE WHEN MIN(trips)=MAX(trips) THEN 1 ELSE 0 END AS same_flag
+FROM psg_trips
+LEFT JOIN Passenger ON Passenger.ID_psg = psg_trips.id_psg
+GROUP BY psg_trips.id_psg, Passenger.name
+HAVING COUNT(DISTINCT id_comp) > 1
+    AND MIN(trips)=MAX(trips)
+
+
+
+Exercise: 93 (Serge I: 2003-06-05)
+
+For each airline that transported passengers calculate the total flight duration of its planes.
+Result set: company name, duration in minutes.
+
+
+WITH
+durations AS (
+SELECT DISTINCT
+    Trip.id_comp
+    , date
+    , Trip.trip_no
+    , time_out
+    , time_in
+    , CASE WHEN EXTRACT(EPOCH FROM time_in) - EXTRACT(EPOCH FROM time_out) > 0 
+                 THEN time_in - time_out
+               ELSE time_in - time_out + INTERVAL '24 hour' END AS duration
+FROM Pass_in_trip
+INNER JOIN Trip ON Trip.trip_no=Pass_in_trip.trip_no
+)
+SELECT
+    Company.name
+    , EXTRACT(EPOCH FROM SUM(duration)) / 60 AS duration
+FROM durations
+LEFT JOIN Company ON Company.ID_comp=durations.id_comp
+GROUP BY durations.id_comp, Company.name
+
+
+
+Exercise: 77 (Serge I: 2003-04-09)
+
+Find the days with the maximum number of flights departed from Rostov. Result set: number of trips, date.
+
+WITH
+rst_flights AS (
+SELECT
+    COUNT(DISTINCT Pass_in_trip.trip_no) as cnt
+    , Pass_in_trip.date
+--    , Trip.town_from
+FROM Pass_in_trip
+LEFT JOIN Trip ON Trip.trip_no = Pass_in_trip.trip_no
+WHERE Trip.town_from='Rostov'
+GROUP BY Pass_in_trip.date
+)
+SELECT
+*
+FROM rst_flights
+WHERE cnt = (SELECT MAX(cnt) FROM rst_flights)
+
+
+
+Exercise: 66 (Serge I: 2003-04-09)
+
+For all days between 2003-04-01 and 2003-04-07 find the number of trips from Rostov with passengers aboard.
+Result set: date, number of trips.
+
+WITH
+period AS (
+SELECT 
+generate_series('2003-04-01'::DATE, '2003-04-07'::DATE, '1 day') AS dt
+),
+trips_from_rostov AS (
+SELECT
+    date
+    , COUNT(DISTINCT Trip.trip_no) as cnt
+FROM Pass_in_trip
+INNER JOIN Trip ON Trip.trip_no=Pass_in_trip.trip_no
+WHERE date::DATE >= '2003-04-01' 
+    AND date::DATE < '2003-04-07'::DATE + INTERVAL '1 day'
+    AND town_from='Rostov'
+GROUP BY date
+)
+SELECT
+   period.dt::TIMESTAMP
+   , COALESCE(cnt, 0) as cnt
+FROM period
+LEFT JOIN trips_from_rostov ON trips_from_rostov.date=period.dt
+
+
+
+Exercise: 63 (Serge I (https://sql-ex.ru/users_page.php?username=Serge%20I): 2003-04-08)
+
+Find the names of different passengers that ever travelled more than once occupying seats with the same number.
+
+SELECT
+    Passenger.name
+FROM (
+    SELECT
+        ID_psg
+        --, COUNT(*) AS trips
+        --, COUNT(DISTINCT place) AS uniq_places
+    FROM Pass_in_trip
+    GROUP BY ID_psg
+    HAVING COUNT(*)>1 AND COUNT(DISTINCT place)<COUNT(*)
+) AS trps
+LEFT JOIN Passenger ON Passenger.ID_psg=trps.ID_psg
+
+
+Exercise: 64 (Serge I (https://sql-ex.ru/users_page.php?username=Serge%20I): 2010-06-04)
+
+Using the Income and Outcome tables, determine for each buy-back center the days when it received funds but made no payments, and vice versa.
+Result set: point, date, type of operation (inc/out), sum of money per day.
+
+
+SELECT 
+    point,
+    date,
+    CASE WHEN SUM(inc) > 0 THEN 'inc' 
+         ELSE 'out' END AS operation,
+    COALESCE(SUM(inc), SUM(out)) AS money
+FROM (
+    SELECT point, date, inc, NULL AS out FROM Income
+    UNION ALL
+    SELECT point, date, NULL AS inc, out FROM Outcome
+) AS t
+GROUP BY point, date
+HAVING SUM(inc) IS NULL OR SUM(out) IS NULL
+
+
+Exercise: 60 (Serge I (https://sql-ex.ru/users_page.php?username=Serge%20I): 2003-02-15)
+
+For the database with money transactions being recorded not more than once a day, calculate the cash balance of each buy-back center at the beginning of 4/15/2001.
+Note: exclude centers not having any records before the specified date.
+Result set: point, balance
+
+WITH
+out_payments AS (
+    SELECT
+        point, SUM(out) as out
+    FROM Outcome_o
+    WHERE date::DATE < '2001-04-15'
+    GROUP BY point
+),
+in_payments AS (
+    SELECT
+        point, SUM(inc) as inc
+    FROM Income_o
+    WHERE date::DATE < '2001-04-15'
+    GROUP BY point
+) 
+SELECT
+    COALESCE(out_payments.point, in_payments.point)
+    , COALESCE(in_payments.inc, 0) - COALESCE(out_payments.out, 0) AS remain
+FROM out_payments
+FULL OUTER JOIN in_payments 
+    ON in_payments.point = out_payments.point
+
+
+Exercise: 63 (Serge I: 2003-04-08)
+
+Find the names of different passengers that ever travelled more than once occupying seats with the same number.
+
+SELECT
+    Passenger.name
+FROM (
+    SELECT
+        ID_psg
+        --, COUNT(*) AS trips
+        --, COUNT(DISTINCT place) AS uniq_places
+    FROM Pass_in_trip
+    GROUP BY ID_psg
+    HAVING COUNT(*)>1 AND COUNT(DISTINCT place)<COUNT(*)
+) AS trps
+LEFT JOIN Passenger ON Passenger.ID_psg=trps.ID_psg
+
+
+Exercise: 64 (Serge I: 2010-06-04)
+
+Using the Income and Outcome tables, determine for each buy-back center the days when it received funds but made no payments, and vice versa.
+Result set: point, date, type of operation (inc/out), sum of money per day.
+
+
+SELECT 
+    point,
+    date,
+    CASE WHEN SUM(inc) > 0 THEN 'inc' 
+         ELSE 'out' END AS operation,
+    COALESCE(SUM(inc), SUM(out)) AS money
+FROM (
+    SELECT point, date, inc, NULL AS out FROM Income
+    UNION ALL
+    SELECT point, date, NULL AS inc, out FROM Outcome
+) AS t
+GROUP BY point, date
+HAVING SUM(inc) IS NULL OR SUM(out) IS NULL
+
+
+Exercise: 60 (Serge I: 2003-02-15)
+
+For the database with money transactions being recorded not more than once a day, calculate the cash balance of each buy-back center at the beginning of 4/15/2001.
+Note: exclude centers not having any records before the specified date.
+Result set: point, balance
+
+
+SELECT
+    point,
+    SUM(inc) AS balance
+FROM (
+    SELECT point, date, inc FROM Income_o WHERE date < '2001-04-15'
+    UNION ALL
+    SELECT point, date, -out FROM Outcome_o WHERE date < '2001-04-15'
+) AS t
+GROUP BY point;
+
+
+
+Exercise: 59 (Serge I: 2003-02-15)
+
+Calculate the cash balance of each buy-back center for the database with money transactions being recorded not more than once a day.
+Result set: point, balance.
+
+
+WITH
+out_payments AS (
+    SELECT
+        point, SUM(out) as out
+    FROM Outcome_o
+    GROUP BY point
+),
+in_payments AS (
+    SELECT
+        point, SUM(inc) as inc
+    FROM Income_o
+    GROUP BY point
+) 
+SELECT
+    COALESCE(out_payments.point, in_payments.point)
+    , COALESCE(in_payments.inc, 0) - COALESCE(out_payments.out, 0) AS remain
+FROM out_payments
+FULL OUTER JOIN in_payments 
+    ON in_payments.point = out_payments.point
+
+
+
+SELECT
+    point,
+    SUM(inc) AS balance
+FROM (
+    SELECT point, date, inc FROM Income_o 
+    UNION ALL
+    SELECT point, date, -out FROM Outcome_o
+) AS t
+GROUP BY point;
+
+
+
+Exercise: 30 (Serge I: 2003-02-14)
+
+Under the assumption that receipts of money (inc) and payouts (out) can be registered any number of times a day for each collection point [i.e. the code column is the primary key], display a table with one corresponding row for each operating date of each collection point.
+Result set: point, date, total payout per day (out), total money intake per day (inc).
+Missing values are considered to be NULL.
+
+
+WITH
+incs AS (
+    SELECT
+        point
+        , date
+        , SUM(inc) as inc
+    FROM Income
+    GROUP BY point, date
+),
+outs AS (
+    SELECT
+        point
+        , date
+        , SUM(out) as out
+    FROM Outcome
+    GROUP BY point, date
+)
+SELECT
+    COALESCE (incs.point, outs.point) AS point
+    , COALESCE (incs.date, outs.date) AS date
+    , out
+    , inc
+FROM incs
+FULL OUTER JOIN outs ON outs.point=incs.point
+                     AND outs.date=incs.date
+
+
+
+Exercise: 28 (Serge I: 2012-05-04)
+
+Using Product table, find out the number of makers who produce only one model.
+
+SELECT COUNT(*)
+FROM (
+    SELECT
+        maker
+        , COUNT(DISTINCT model) as cnt
+    FROM Product
+    GROUP BY maker
+    HAVING COUNT(DISTINCT model)=1
+) T
+
+
+Exercise: 27 (Serge I: 2003-02-03)
+
+Find out the average hard disk drive capacity of PCs produced by makers who also manufacture printers.
+Result set: maker, average HDD capacity.
+
+WITH
+makers AS (
+    SELECT
+        maker
+        , COUNT(DISTINCT type) as common_flg
+    FROM Product
+    WHERE type IN ('PC', 'Printer')
+    GROUP BY maker
+    HAVING COUNT(DISTINCT type)=2
+)
+SELECT
+   maker
+   , AVG(hd) AS capacity
+FROM PC
+LEFT JOIN Product ON Product.model=PC.model
+                  AND Product.maker IN (SELECT maker FROM makers)
+GROUP BY maker
+HAVING maker IS NOT NULL
+
+
+Exercise: 26 (Serge I: 2003-02-14)
+
+Find out the average price of PCs and laptops produced by maker A.
+Result set: one overall average price for all items.
+
+WITH
+unioned AS (
+    SELECT model, price FROM PC
+    UNION ALL
+    SELECT model, price FROM Laptop
+)
+SELECT
+    AVG(price)
+FROM unioned
+INNER JOIN Product ON Product.model=unioned.model
+                   AND Product.maker='A'
+
+
+
+Exercise: 25 (Serge I: 2003-02-14)
+
+Find the printer makers also producing PCs with the lowest RAM capacity and the highest processor speed of all PCs having the lowest RAM capacity.
+Result set: maker.
+
+WITH 
+selected_pc_models AS (
+    SELECT model FROM (
+    SELECT
+        model,
+        DENSE_RANK() OVER (ORDER BY speed DESC) as rn
+    FROM PC
+    WHERE ram = (SELECT MIN(ram) FROM PC)
+    ) as pcs WHERE rn=1
+),
+pcmakers AS (
+    SELECT
+        maker
+    FROM Product
+    WHERE model IN (SELECT * FROM selected_pc_models)
+)
+SELECT DISTINCT maker
+FROM Product
+WHERE type='Printer'
+AND maker IN (SELECT * FROM pcmakers)
+
+
+Exercise: 24 (Serge I: 2003-02-03)
+
+List the models of any type having the highest price of all products present in the database.
+
+WITH all_products AS (
+    SELECT model, price FROM PC
+    UNION
+    SELECT model, price FROM Laptop
+    UNION
+    SELECT model, price FROM Printer
+)
+SELECT model
+FROM all_products
+WHERE price = (
+    SELECT MAX(price)
+    FROM all_products
+)
+
+Exercise: 23 (Serge I: 2003-02-14)
+
+Get the makers producing both PCs having a speed of 750 MHz or higher and laptops with a speed of 750 MHz or higher.
+Result set: maker
+
+WITH
+pcs as (
+SELECT 
+    maker
+FROM Product
+WHERE model IN (SELECT model FROM PC WHERE speed>=750)
+),
+lapt AS (
+SELECT 
+    maker
+FROM Product
+WHERE model IN (SELECT model FROM Laptop WHERE speed>=750)
+)
+SELECT 
+pcs.maker
+FROM pcs INNER JOIN lapt ON pcs.maker=lapt.maker
+
+
+
+Exercise: 18 (Serge I: 2003-02-03)
+
+Find the makers of the cheapest color printers.
+Result set: maker, price.
+
+
+SELECT DISTINCT
+    Product.maker
+    , T.price
+FROM (
+    SELECT
+        model
+        , price
+        , DENSE_RANK() OVER(ORDER BY price ASC) AS rn
+    FROM Printer
+    WHERE color = 'y'
+) T
+INNER JOIN Product ON Product.model=T.model
+                   AND T.rn=1
+
+
+
+Exercise: 17 (Serge I: 2003-02-03)
+
+Get the laptop models that have a speed smaller than the speed of any PC.
+Result set: type, model, speed.
+
+
+WITH
+speed_of_any_pc AS (
+    SELECT MIN(speed) as speed FROM PC
+)
+SELECT DISTINCT
+    Product.type, Product.model, Laptop.speed
+FROM Laptop
+INNER JOIN Product ON Product.model=Laptop.model
+WHERE Laptop.speed<(select * from speed_of_any_pc)
+
+
+SELECT DISTINCT
+    'Laptop' AS type
+    , model
+    , speed
+FROM Laptop
+WHERE speed < (SELECT MIN(speed) FROM PC)
+
+
+
+Exercise: 16 (Serge I: 2003-02-03)
+
+Get pairs of PC models with identical speeds and the same RAM capacity. Each resulting pair should be displayed only once, i.e. (i, j) but not (j, i).
+Result set: model with the bigger number, model with the smaller number, speed, and RAM.
+
+
+SELECT DISTINCT
+    p1.model, p2.model, p1.speed, p1.ram
+FROM PC as p1
+FULL OUTER JOIN PC as p2
+    ON p1.speed = p2.speed AND p1.ram = p2.ram
+WHERE p1.model>p2.model
+
+
+SELECT DISTINCT
+    pc1.model, pc2.model, pc1.speed, pc2.ram
+FROM PC pc1
+INNER JOIN PC pc2 ON pc2.speed=pc1.speed
+                       AND pc2.ram=pc1.ram
+                       AND pc1.model > pc2.model
+
+
+Exercise: 15 (Serge I: 2003-02-03)
+
+Get hard drive capacities that are identical for two or more PCs.
+Result set: hd.
+
+SELECT
+    hd
+FROM PC
+GROUP BY hd
+HAVING count(*) > 1
+
+
+
+Exercise: 11 (Serge I: 2002-11-02)
+
+Find out the average speed of PCs.
+
+SELECT
+AVG(speed)
+FROM PC
+
+
+Exercise: 10 (Serge I: 2002-09-23)
+
+Find the printer models having the highest price. Result set: model, price.
+
+SELECT model, price
+FROM Printer
+WHERE price = (SELECT MAX(price) FROM Printer);
+
+
+
+Exercise: 7 (Serge I: 2002-11-02)
+
+Get the models and prices for all commercially available products (of any type) produced by maker B.
+
+SELECT
+  PC.model, PC.price
+FROM PC LEFT JOIN Product ON Product.model=PC.model
+WHERE Product.maker='B'
+UNION
+SELECT
+  Laptop.model, Laptop.price
+FROM Laptop LEFT JOIN Product ON Product.model= Laptop.model
+WHERE Product.maker='B'
+UNION
+SELECT
+  Printer.model, Printer.price
+FROM Printer LEFT JOIN Product ON Product.model= Printer.model
+WHERE Product.maker='B'
+
+
+Exercise: 6 (Serge I: 2002-10-28)
+
+For each maker producing laptops with a hard drive capacity of 10 Gb or higher, find the speed of such laptops. Result set: maker, speed.
+
+SELECT DISTINCT
+    maker, speed 
+FROM Laptop
+INNER JOIN Product ON Laptop.model=Product.model
+WHERE Laptop.hd>=10
+
+
+Exercise: 130 (Velmont: 2015-08-14)
+
+Historians decided to make a summary of battles and arrange it in two super columns. Each super column consists of three columns containing the battle serial number, name, and date.
+First, the left super column is filled out in ascending order of serial numbers, then the right one. Serial numbers are assigned sequentially, with the battles being sorted by date, then by name.
+In order to save paper the historians distribute the data from the Battles table equally between the two super columns (adding an extra battle to the left one if the total of battles is odd).
+Display the result of the historians’ work as a six-column table, filling empty cells with NULL values.
+
+WITH SortedBattles AS (
+    SELECT 
+        name, 
+        date,
+        ROW_NUMBER() OVER (ORDER BY date, name) AS rn,
+        CEILING(COUNT(*) OVER () / 2.0) AS left_count
+    FROM Battles
+)
+SELECT 
+    l.rn AS num1, 
+    l.name AS name1, 
+    l.date AS date1,
+    r.rn AS num2, 
+    r.name AS name2, 
+    r.date AS date2
+FROM SortedBattles l
+LEFT JOIN SortedBattles r 
+    ON r.rn = l.rn + l.left_count
+WHERE l.rn <= l.left_count;
+
+
+
