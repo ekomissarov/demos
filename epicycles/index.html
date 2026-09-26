@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Epicycles Message</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#000;color:#eee;font:14px system-ui,sans-serif}
+canvas{position:fixed;inset:0;width:100%;height:100%}
+#ui{position:fixed;z-index:2;top:18px;left:18px;width:min(390px,calc(100vw - 60px));padding:14px;
+background:#090909e8;border:1px solid #555;border-radius:12px}
+textarea,input,button{box-sizing:border-box;width:100%;border:1px solid #555;border-radius:8px;background:#151515;color:#fff;padding:10px}
+textarea{height:76px;resize:vertical;margin:9px 0}
+.row{display:grid;grid-template-columns:1fr 140px;gap:8px}
+button{cursor:pointer} #out{font-size:12px;color:#aaa;word-break:break-all;margin-top:8px}
+.small{font-size:12px;color:#999;margin-top:7px}
+body.play #ui{opacity:.12;transition:.2s} body.play #ui:hover{opacity:1}
+</style></head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <b>Epicycles message</b>
+  <textarea id="msg" placeholder="Text">Hi</textarea>
+  <div class="row"><input id="count" type="number" min="1" max="1024" value="128"><button id="go">Generate link</button></div>
+  <div class="small">Number of Fourier vectors: 1–1024</div>
+  <div id="out"></div>
+</div>
+<script>
+const C=document.querySelector('#c'),x=C.getContext('2d'),msg=document.querySelector('#msg'),
+num=document.querySelector('#count'),out=document.querySelector('#out');
+let W,H,dpr=1,co=[],trace=[],t=0,last=0;
+
+function encode(s){
+  let q='',b=new TextEncoder().encode(s); for(let v of b)q+=String.fromCharCode(v);
+  return btoa(q).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')
+}
+function decode(s){
+  s=s.replaceAll('-','+').replaceAll('_','/'); s+='='.repeat((4-s.length%4)%4);
+  return new TextDecoder().decode(Uint8Array.from(atob(s),c=>c.charCodeAt(0)))
+}
+const qs=new URLSearchParams(location.search);
+if(qs.has('t')){try{msg.value=decode(qs.get('t'))}catch(e){} document.body.classList.add('play')}
+if(qs.has('n'))num.value=Math.max(1,Math.min(1024,+qs.get('n')||128));
+
+function fit(){
+  dpr=Math.min(devicePixelRatio||1,2); W=innerWidth;H=innerHeight;
+  C.width=W*dpr;C.height=H*dpr;x.setTransform(dpr,0,0,dpr,0,0);build()
+}
+addEventListener('resize',fit);
+
+function textPath(text,N){
+  // Rasterize the text, keep only boundary pixels, then connect nearby boundary samples.
+  // Unlike the previous version, we do NOT feed raster-scan rows into the DFT.
+  const o=document.createElement('canvas'),g=o.getContext('2d',{willReadFrequently:true});
+  o.width=900;o.height=300;g.fillStyle='#000';g.fillRect(0,0,900,300);
+  let fs=190;g.font='700 '+fs+'px sans-serif';
+  while(g.measureText(text||' ').width>780&&fs>28)g.font='700 '+(--fs)+'px sans-serif';
+  g.textAlign='center';g.textBaseline='middle';g.fillStyle='#fff';g.fillText(text||' ',450,150);
+  const im=g.getImageData(0,0,900,300),a=im.data,edge=[];
+  const on=(X,Y)=>X>=0&&Y>=0&&X<900&&Y<300&&a[(Y*900+X)*4]>100;
+  for(let Y=2;Y<298;Y+=2)for(let X=2;X<898;X+=2)if(on(X,Y)&&(!on(X+2,Y)||!on(X-2,Y)||!on(X,Y+2)||!on(X,Y-2)))edge.push([X-450,Y-150]);
+  if(!edge.length)return [[0,0]];
+  // Keep a manageable pool, then nearest-neighbour ordering produces a continuous outline-like route.
+  const cap=Math.min(edge.length,Math.max(N*3,600)),pool=[];
+  for(let i=0;i<cap;i++)pool.push(edge[Math.floor(i*edge.length/cap)]);
+  let cur=pool.splice(0,1)[0],path=[cur];
+  while(pool.length){
+    let bi=0,bd=Infinity;
+    for(let i=0;i<pool.length;i++){let dx=pool[i][0]-cur[0],dy=pool[i][1]-cur[1],dd=dx*dx+dy*dy;if(dd<bd){bd=dd;bi=i}}
+    cur=pool.splice(bi,1)[0];path.push(cur)
+  }
+  // Resample the polyline by arc length so DFT samples are evenly spaced.
+  let seg=[],total=0;
+  for(let i=0;i<path.length;i++){let A=path[i],B=path[(i+1)%path.length],L=Math.hypot(B[0]-A[0],B[1]-A[1]);seg.push(L);total+=L}
+  let res=[],i=0,used=0;
+  for(let k=0;k<N;k++){
+    let target=k*total/N;
+    while(used+seg[i]<target&&i<seg.length-1){used+=seg[i];i++}
+    let A=path[i],B=path[(i+1)%path.length],u=seg[i]?(target-used)/seg[i]:0;
+    res.push([A[0]+(B[0]-A[0])*u,A[1]+(B[1]-A[1])*u])
+  }
+  return res
+}
+function dft(P){
+  const N=P.length,A=[];
+  for(let k=0;k<N;k++){let re=0,im=0;
+    for(let n=0;n<N;n++){let q=-2*Math.PI*k*n/N,c=Math.cos(q),s=Math.sin(q);
+      re+=P[n][0]*c-P[n][1]*s; im+=P[n][0]*s+P[n][1]*c}
+    re/=N;im/=N;A.push({f:k>N/2?k-N:k,r:Math.hypot(re,im),p:Math.atan2(im,re)})
+  }
+  return A.sort((a,b)=>b.r-a.r)
+}
+function build(){
+  let n=Math.max(1,Math.min(1024,+num.value||128));num.value=n;
+  // Number of path samples equals number of requested Fourier vectors.
+  co=dft(textPath(msg.value,n));trace=[];t=0
+}
+msg.onchange=build;num.onchange=build;
+document.querySelector('#go').onclick=async()=>{
+  build();let u=new URL(location.href);u.search='';
+  u.searchParams.set('t',encode(msg.value));u.searchParams.set('n',num.value);
+  out.textContent=u;
+  try{await navigator.clipboard.writeText(u.toString());out.textContent='Copied: '+u}catch(e){}
+};
+
+function draw(now){
+  requestAnimationFrame(draw);
+  x.setTransform(dpr,0,0,dpr,0,0);x.fillStyle='#000';x.fillRect(0,0,W,H);
+  x.save();x.translate(W/2,H/2);
+  let px=0,py=0;
+  const show=Math.min(co.length,160);
+  for(let i=0;i<co.length;i++){
+    let z=co[i],ox=px,oy=py,a=z.f*t+z.p;px+=z.r*Math.cos(a);py+=z.r*Math.sin(a);
+    if(i<show&&z.r>.8){x.beginPath();x.strokeStyle='rgba(255,255,255,.16)';x.lineWidth=.7;
+      x.arc(ox,oy,z.r,0,7);x.moveTo(ox,oy);x.lineTo(px,py);x.stroke()}
+  }
+  trace.push([px,py]); if(trace.length>1800)trace.shift();
+  if(trace.length>1){x.beginPath();x.moveTo(trace[0][0],trace[0][1]);
+    for(let p of trace)x.lineTo(p[0],p[1]);x.strokeStyle='#fff';x.lineWidth=2.2;x.stroke()}
+  x.restore();
+  t+=.012;
+}
+fit();requestAnimationFrame(draw);
+</script></body></html>
